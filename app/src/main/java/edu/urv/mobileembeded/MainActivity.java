@@ -1,8 +1,12 @@
 package edu.urv.mobileembeded;
 
 import android.Manifest;
+import android.bluetooth.BluetoothDevice;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.view.LayoutInflater;
+import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
@@ -36,6 +40,11 @@ public class MainActivity extends AppCompatActivity implements BluetoothListener
     private BluetoothManager bluetoothManager;
     private WeatherApiService weatherApiService;
 
+    private Button buttonScan;
+    private RecyclerView recyclerViewDevices;
+    private DeviceAdapter deviceAdapter;
+    private List<BluetoothDevice> deviceList = new ArrayList<>();
+
     private EditText editTextCity;
     private Button buttonSearch;
     private TextView textViewBoardTemp;
@@ -51,6 +60,8 @@ public class MainActivity extends AppCompatActivity implements BluetoothListener
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        buttonScan = findViewById(R.id.buttonScan);
+        recyclerViewDevices = findViewById(R.id.recyclerViewDevices);
         editTextCity = findViewById(R.id.editTextCity);
         buttonSearch = findViewById(R.id.buttonSearch);
         textViewBoardTemp = findViewById(R.id.textViewBoardTemp);
@@ -59,14 +70,20 @@ public class MainActivity extends AppCompatActivity implements BluetoothListener
         imageViewWeatherIcon = findViewById(R.id.imageViewWeatherIcon);
         recyclerViewForecast = findViewById(R.id.recyclerViewForecast);
 
+        recyclerViewDevices.setLayoutManager(new LinearLayoutManager(this));
+        deviceAdapter = new DeviceAdapter(deviceList, this::onDeviceItemClick);
+        recyclerViewDevices.setAdapter(deviceAdapter);
+
         recyclerViewForecast.setLayoutManager(new LinearLayoutManager(this));
         forecastAdapter = new ForecastAdapter(forecastList);
         recyclerViewForecast.setAdapter(forecastAdapter);
 
-        bluetoothManager = new BluetoothManager(this);
+        bluetoothManager = new BluetoothManager(this, this);
         weatherApiService = RetrofitClient.getClient().create(WeatherApiService.class);
 
         requestPermissions();
+
+        buttonScan.setOnClickListener(v -> bluetoothManager.startScan());
 
         buttonSearch.setOnClickListener(v -> {
             String city = editTextCity.getText().toString();
@@ -155,15 +172,82 @@ public class MainActivity extends AppCompatActivity implements BluetoothListener
     }
 
     @Override
+    public void onDeviceDisconnected(String deviceName) {
+        runOnUiThread(() -> {
+            Toast.makeText(this, "Disconnected from " + deviceName, Toast.LENGTH_SHORT).show();
+        });
+    }
+
+    @Override
+    public void onDeviceDiscovered(BluetoothDevice device) {
+        runOnUiThread(() -> {
+            if (!deviceList.contains(device)) {
+                deviceList.add(device);
+                deviceAdapter.notifyItemInserted(deviceList.size() - 1);
+            }
+        });
+    }
+
+    @Override
     public void onError(String message) {
         runOnUiThread(() -> {
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
         });
     }
 
+    private void onDeviceItemClick(BluetoothDevice device) {
+        bluetoothManager.connectToDevice(device);
+    }
+
     @Override
     protected void onDestroy() {
         super.onDestroy();
         bluetoothManager.closeConnection();
+    }
+
+    // Adapter for discovered devices RecyclerView
+    private static class DeviceAdapter extends RecyclerView.Adapter<DeviceAdapter.ViewHolder> {
+        private final List<BluetoothDevice> devices;
+        private final OnDeviceClickListener listener;
+
+        public interface OnDeviceClickListener {
+            void onDeviceClick(BluetoothDevice device);
+        }
+
+        public DeviceAdapter(List<BluetoothDevice> devices, OnDeviceClickListener listener) {
+            this.devices = devices;
+            this.listener = listener;
+        }
+
+        @NonNull
+        @Override
+        public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            View view = LayoutInflater.from(parent.getContext()).inflate(android.R.layout.simple_list_item_1, parent, false);
+            return new ViewHolder(view);
+        }
+
+        @Override
+        public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
+            BluetoothDevice device = devices.get(position);
+            if (ActivityCompat.checkSelfPermission(holder.itemView.getContext(), Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                return;
+            }
+            holder.textView.setText(device.getName());
+            holder.itemView.setOnClickListener(v -> listener.onDeviceClick(device));
+        }
+
+        @Override
+        public int getItemCount() {
+            return devices.size();
+        }
+
+        public static class ViewHolder extends RecyclerView.ViewHolder {
+            public TextView textView;
+
+            public ViewHolder(View itemView) {
+                super(itemView);
+                textView = itemView.findViewById(android.R.id.text1);
+            }
+        }
     }
 }

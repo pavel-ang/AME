@@ -3,27 +3,44 @@ package edu.urv.mobileembeded.bluetooth;
 import android.Manifest;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothSocket;
+import android.bluetooth.BluetoothGatt;
+import android.bluetooth.BluetoothGattCallback;
+import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattService;
+import android.bluetooth.BluetoothProfile;
+import android.bluetooth.le.BluetoothLeScanner;
+import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanResult;
+import android.content.Context;
 import android.content.pm.PackageManager;
+import android.os.Handler;
+import android.os.Looper;
+
 import androidx.core.app.ActivityCompat;
-import java.io.IOException;
-import java.io.InputStream;
+
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 
 public class BluetoothManager {
 
-    private static final UUID SPP_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
-    private final BluetoothAdapter bluetoothAdapter;
-    private BluetoothSocket bluetoothSocket;
-    private InputStream inputStream;
-    private Thread workerThread;
-    private BluetoothListener listener;
+    private static final UUID HM10_SERVICE_UUID = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb");
+    private static final UUID HM10_CHARACTERISTIC_UUID = UUID.fromString("0000ffe1-0000-1000-8000-00805f9b34fb");
 
-    public BluetoothManager(BluetoothListener listener) {
+    private final BluetoothAdapter bluetoothAdapter;
+    private final BluetoothLeScanner bluetoothLeScanner;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Context context;
+    private final BluetoothListener listener;
+
+    private BluetoothGatt bluetoothGatt;
+    private final List<BluetoothDevice> discoveredDevices = new ArrayList<>();
+    private boolean scanning;
+
+    public BluetoothManager(Context context, BluetoothListener listener) {
+        this.context = context;
         this.bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        this.bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
         this.listener = listener;
     }
 
@@ -31,76 +48,156 @@ public class BluetoothManager {
         return bluetoothAdapter != null && bluetoothAdapter.isEnabled();
     }
 
-    public List<BluetoothDevice> getPairedDevices() {
-        if (ActivityCompat.checkSelfPermission(null, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-             if (listener != null) {
-                listener.onError("Bluetooth permission not granted");
-            }
-            return new ArrayList<>();
+    public void startScan() {
+        if (scanning) {
+            return;
         }
-        Set<BluetoothDevice> pairedDevices = bluetoothAdapter.getBondedDevices();
-        return new ArrayList<>(pairedDevices);
-    }
-
-    public void connectToDevice(BluetoothDevice device) {
-        if (ActivityCompat.checkSelfPermission(null, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
             if (listener != null) {
-                listener.onError("Bluetooth permission not granted");
+                listener.onError("Bluetooth scan permission not granted");
             }
             return;
         }
-        try {
-            bluetoothSocket = device.createRfcommSocketToServiceRecord(SPP_UUID);
-            bluetoothSocket.connect();
-            inputStream = bluetoothSocket.getInputStream();
-            beginListenForData();
-            if (listener != null) {
-                listener.onDeviceConnected(device.getName());
-            }
-        } catch (IOException e) {
-            if (listener != null) {
-                listener.onError("Connection failed: " + e.getMessage());
-            }
-        }
+        discoveredDevices.clear();
+        scanning = true;
+        // Stop scanning after a predefined scan period.
+        handler.postDelayed(this::stopScan, 10000); // 10 seconds
+        bluetoothLeScanner.startScan(leScanCallback);
     }
 
-    private void beginListenForData() {
-        workerThread = new Thread(() -> {
-            byte[] buffer = new byte[1024];
-            int bytes;
-            while (!Thread.currentThread().isInterrupted()) {
-                try {
-                    bytes = inputStream.read(buffer);
-                    String data = new String(buffer, 0, bytes);
-                    if (listener != null) {
-                        listener.onDataReceived(data);
-                    }
-                } catch (IOException e) {
-                    if (listener != null) {
-                        listener.onError("Error reading from device: " + e.getMessage());
-                    }
-                    break;
-                }
+    public void stopScan() {
+        if (!scanning) {
+            return;
+        }
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+            if (listener != null) {
+                listener.onError("Bluetooth scan permission not granted");
             }
-        });
-        workerThread.start();
+            return;
+        }
+        scanning = false;
+        bluetoothLeScanner.stopScan(leScanCallback);
+    }
+
+    public List<BluetoothDevice> getDiscoveredDevices() {
+        return discoveredDevices;
+    }
+
+    public void connectToDevice(BluetoothDevice device) {
+        if (device == null) {
+            return;
+        }
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            if (listener != null) {
+                listener.onError("Bluetooth connect permission not granted");
+            }
+            return;
+        }
+        stopScan();
+        bluetoothGatt = device.connectGatt(context, false, gattCallback);
     }
 
     public void closeConnection() {
-        try {
-            if (workerThread != null) {
-                workerThread.interrupt();
-            }
-            if (inputStream != null) {
-                inputStream.close();
-            }
-            if (bluetoothSocket != null) {
-                bluetoothSocket.close();
-            }
-        } catch (IOException e) {
+        if (bluetoothGatt == null) {
+            return;
+        }
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
             if (listener != null) {
-                listener.onError("Error closing connection: " + e.getMessage());
+                listener.onError("Bluetooth connect permission not granted");
+            }
+            return;
+        }
+        bluetoothGatt.close();
+        bluetoothGatt = null;
+    }
+
+    public void writeData(String data) {
+        if (bluetoothGatt == null) {
+            return;
+        }
+        BluetoothGattService service = bluetoothGatt.getService(HM10_SERVICE_UUID);
+        if (service == null) {
+            return;
+        }
+        BluetoothGattCharacteristic characteristic = service.getCharacteristic(HM10_CHARACTERISTIC_UUID);
+        if (characteristic == null) {
+            return;
+        }
+        characteristic.setValue(data.getBytes());
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        bluetoothGatt.writeCharacteristic(characteristic);
+    }
+
+    private final ScanCallback leScanCallback = new ScanCallback() {
+        @Override
+        public void onScanResult(int callbackType, ScanResult result) {
+            super.onScanResult(callbackType, result);
+            BluetoothDevice device = result.getDevice();
+            if (device != null && !discoveredDevices.contains(device)) {
+                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    return;
+                }
+                String deviceName = device.getName();
+                if (deviceName != null && !deviceName.isEmpty()) {
+                    discoveredDevices.add(device);
+                    if (listener != null) {
+                        listener.onDeviceDiscovered(device);
+                    }
+                }
             }
         }
-    }
+    };
+
+    private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
+        @Override
+        public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                if (listener != null) {
+                    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                        return;
+                    }
+                    listener.onDeviceConnected(gatt.getDevice().getName());
+                }
+                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    return;
+                }
+                gatt.discoverServices();
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                if (listener != null) {
+                    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                        return;
+                    }
+                    listener.onDeviceDisconnected(gatt.getDevice().getName());
+                }
+            }
+        }
+
+        @Override
+        public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                BluetoothGattService service = gatt.getService(HM10_SERVICE_UUID);
+                if (service != null) {
+                    BluetoothGattCharacteristic characteristic = service.getCharacteristic(HM10_CHARACTERISTIC_UUID);
+                    if (characteristic != null) {
+                        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                            return;
+                        }
+                        gatt.setCharacteristicNotification(characteristic, true);
+                    }
+                }
+            }
+        }
+
+        @Override
+        public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+            if (HM10_CHARACTERISTIC_UUID.equals(characteristic.getUuid())) {
+                String data = new String(characteristic.getValue());
+                if (listener != null) {
+                    listener.onDataReceived(data);
+                }
+            }
+        }
+    };
 }
