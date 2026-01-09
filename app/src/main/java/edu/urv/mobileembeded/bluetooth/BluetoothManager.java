@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
@@ -16,6 +17,7 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 
 import androidx.core.app.ActivityCompat;
 
@@ -25,8 +27,10 @@ import java.util.UUID;
 
 public class BluetoothManager {
 
+    private static final String TAG = "BT_DEBUG";
     private static final UUID HM10_SERVICE_UUID = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb");
     private static final UUID HM10_CHARACTERISTIC_UUID = UUID.fromString("0000ffe1-0000-1000-8000-00805f9b34fb");
+    private static final UUID CLIENT_CHARACTERISTIC_CONFIG_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
     private final BluetoothAdapter bluetoothAdapter;
     private BluetoothLeScanner bluetoothLeScanner;
@@ -130,6 +134,7 @@ public class BluetoothManager {
             bluetoothGatt.disconnect();
             bluetoothGatt.close();
         }
+        Log.d(TAG, "Connecting to device: " + device.getAddress());
         stopScan();
         handler.postDelayed(() -> {
             if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
@@ -195,6 +200,7 @@ public class BluetoothManager {
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+            Log.d(TAG, "onConnectionStateChange: status=" + status + ", newState=" + newState);
             if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                 if (listener != null) {
                     listener.onError("Bluetooth connect permission not granted");
@@ -204,18 +210,22 @@ public class BluetoothManager {
 
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
+                    Log.d(TAG, "Connected to GATT server.");
                     if (listener != null) {
                         listener.onDeviceConnected(gatt.getDevice().getName());
                     }
                     gatt.discoverServices();
                 } else {
+                    Log.e(TAG, "Connection failed with status: " + status);
                     if (listener != null) {
                         listener.onError("Connection failed with status: " + status);
                     }
                     gatt.close();
                 }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                Log.d(TAG, "Disconnected from GATT server.");
                 if (status != BluetoothGatt.GATT_SUCCESS) {
+                    Log.e(TAG, "Disconnection with error status: " + status);
                     if (listener != null) {
                         listener.onError("Connection failed with status: " + status);
                     }
@@ -229,6 +239,7 @@ public class BluetoothManager {
 
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+            Log.d(TAG, "onServicesDiscovered: status=" + status);
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 BluetoothGattService service = gatt.getService(HM10_SERVICE_UUID);
                 if (service != null) {
@@ -238,13 +249,28 @@ public class BluetoothManager {
                             return;
                         }
                         gatt.setCharacteristicNotification(characteristic, true);
+                        BluetoothGattDescriptor descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID);
+                        if (descriptor != null) {
+                            descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                            gatt.writeDescriptor(descriptor);
+                            Log.d(TAG, "Writing CCCD descriptor to enable notifications.");
+                        }
                     }
                 }
+            } else {
+                Log.w(TAG, "onServicesDiscovered received: " + status);
             }
         }
 
         @Override
+        public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+            super.onDescriptorWrite(gatt, descriptor, status);
+            Log.d(TAG, "onDescriptorWrite: status=" + status);
+        }
+
+        @Override
         public void onCharacteristicChanged(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
+            Log.d(TAG, "onCharacteristicChanged: value=" + new String(characteristic.getValue()));
             if (HM10_CHARACTERISTIC_UUID.equals(characteristic.getUuid())) {
                 String data = new String(characteristic.getValue());
                 if (listener != null) {
