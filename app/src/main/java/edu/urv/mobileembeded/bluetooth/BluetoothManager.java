@@ -28,7 +28,7 @@ public class BluetoothManager {
     private static final UUID HM10_CHARACTERISTIC_UUID = UUID.fromString("0000ffe1-0000-1000-8000-00805f9b34fb");
 
     private final BluetoothAdapter bluetoothAdapter;
-    private final BluetoothLeScanner bluetoothLeScanner;
+    private BluetoothLeScanner bluetoothLeScanner;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Context context;
     private final BluetoothListener listener;
@@ -39,9 +39,16 @@ public class BluetoothManager {
 
     public BluetoothManager(Context context, BluetoothListener listener) {
         this.context = context;
-        this.bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
-        this.bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
         this.listener = listener;
+        this.bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        if (bluetoothAdapter == null) {
+            this.bluetoothLeScanner = null;
+            if (listener != null) {
+                listener.onError("Bluetooth is not supported on this device.");
+            }
+        } else {
+            this.bluetoothLeScanner = bluetoothAdapter.getBluetoothLeScanner();
+        }
     }
 
     public boolean isBluetoothEnabled() {
@@ -50,6 +57,12 @@ public class BluetoothManager {
 
     public void startScan() {
         if (scanning) {
+            return;
+        }
+        if (bluetoothLeScanner == null) {
+            if (listener != null) {
+                listener.onError("Bluetooth is not supported on this device.");
+            }
             return;
         }
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
@@ -67,6 +80,9 @@ public class BluetoothManager {
 
     public void stopScan() {
         if (!scanning) {
+            return;
+        }
+        if (bluetoothLeScanner == null) {
             return;
         }
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {

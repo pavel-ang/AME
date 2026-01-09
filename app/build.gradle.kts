@@ -4,9 +4,7 @@ plugins {
 
 android {
     namespace = "edu.urv.mobileembeded"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "edu.urv.mobileembeded"
