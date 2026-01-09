@@ -2,6 +2,10 @@ package edu.urv.mobileembeded;
 
 import android.Manifest;
 import android.bluetooth.BluetoothDevice;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -55,6 +59,18 @@ public class MainActivity extends AppCompatActivity implements BluetoothListener
     private ForecastAdapter forecastAdapter;
     private List<CurrentWeatherResponse> forecastList = new ArrayList<>();
 
+    private final BroadcastReceiver discoveryReceiver = new BroadcastReceiver() {
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (BluetoothDevice.ACTION_FOUND.equals(action)) {
+                BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                if (device != null) {
+                    onDeviceDiscovered(device);
+                }
+            }
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -88,7 +104,7 @@ public class MainActivity extends AppCompatActivity implements BluetoothListener
             deviceList.clear();
             deviceAdapter.notifyDataSetChanged();
             addPairedDevices();
-            bluetoothManager.startScan();
+            bluetoothManager.startDiscovery();
         });
 
         buttonSearch.setOnClickListener(v -> {
@@ -97,6 +113,9 @@ public class MainActivity extends AppCompatActivity implements BluetoothListener
                 fetchWeatherData(city);
             }
         });
+
+        IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
+        registerReceiver(discoveryReceiver, filter);
     }
 
     private void requestPermissions() {
@@ -218,6 +237,7 @@ public class MainActivity extends AppCompatActivity implements BluetoothListener
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        unregisterReceiver(discoveryReceiver);
         bluetoothManager.closeConnection();
     }
 
