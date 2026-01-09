@@ -82,8 +82,14 @@ public class MainActivity extends AppCompatActivity implements BluetoothListener
         weatherApiService = RetrofitClient.getClient().create(WeatherApiService.class);
 
         requestPermissions();
+        addPairedDevices();
 
-        buttonScan.setOnClickListener(v -> bluetoothManager.startScan());
+        buttonScan.setOnClickListener(v -> {
+            deviceList.clear();
+            deviceAdapter.notifyDataSetChanged();
+            addPairedDevices();
+            bluetoothManager.startScan();
+        });
 
         buttonSearch.setOnClickListener(v -> {
             String city = editTextCity.getText().toString();
@@ -104,12 +110,22 @@ public class MainActivity extends AppCompatActivity implements BluetoothListener
         }
     }
 
+    private void addPairedDevices() {
+        List<BluetoothDevice> pairedDevices = bluetoothManager.getPairedDevices();
+        for (BluetoothDevice device : pairedDevices) {
+            if (!deviceList.contains(device)) {
+                deviceList.add(device);
+            }
+        }
+        deviceAdapter.notifyDataSetChanged();
+    }
+
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_PERMISSIONS) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                // Permissions granted
+                addPairedDevices();
             } else {
                 Toast.makeText(this, "Permissions denied", Toast.LENGTH_SHORT).show();
             }
@@ -222,7 +238,7 @@ public class MainActivity extends AppCompatActivity implements BluetoothListener
         @NonNull
         @Override
         public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            View view = LayoutInflater.from(parent.getContext()).inflate(android.R.layout.simple_list_item_1, parent, false);
+            View view = LayoutInflater.from(parent.getContext()).inflate(android.R.layout.simple_list_item_2, parent, false);
             return new ViewHolder(view);
         }
 
@@ -232,7 +248,10 @@ public class MainActivity extends AppCompatActivity implements BluetoothListener
             if (ActivityCompat.checkSelfPermission(holder.itemView.getContext(), Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                 return;
             }
-            holder.textView.setText(device.getName());
+            String deviceName = device.getName();
+            String deviceAddress = device.getAddress();
+            holder.text1.setText((deviceName != null && !deviceName.isEmpty()) ? deviceName : "Unknown Device");
+            holder.text2.setText(deviceAddress);
             holder.itemView.setOnClickListener(v -> listener.onDeviceClick(device));
         }
 
@@ -242,11 +261,13 @@ public class MainActivity extends AppCompatActivity implements BluetoothListener
         }
 
         public static class ViewHolder extends RecyclerView.ViewHolder {
-            public TextView textView;
+            public TextView text1;
+            public TextView text2;
 
             public ViewHolder(View itemView) {
                 super(itemView);
-                textView = itemView.findViewById(android.R.id.text1);
+                text1 = itemView.findViewById(android.R.id.text1);
+                text2 = itemView.findViewById(android.R.id.text2);
             }
         }
     }

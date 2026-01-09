@@ -11,6 +11,7 @@ import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
+import android.bluetooth.le.ScanSettings;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Handler;
@@ -55,6 +56,19 @@ public class BluetoothManager {
         return bluetoothAdapter != null && bluetoothAdapter.isEnabled();
     }
 
+    public List<BluetoothDevice> getPairedDevices() {
+        if (bluetoothAdapter == null) {
+            return new ArrayList<>();
+        }
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            if (listener != null) {
+                listener.onError("Bluetooth connect permission not granted");
+            }
+            return new ArrayList<>();
+        }
+        return new ArrayList<>(bluetoothAdapter.getBondedDevices());
+    }
+
     public void startScan() {
         if (scanning) {
             return;
@@ -75,7 +89,10 @@ public class BluetoothManager {
         scanning = true;
         // Stop scanning after a predefined scan period.
         handler.postDelayed(this::stopScan, 10000); // 10 seconds
-        bluetoothLeScanner.startScan(leScanCallback);
+        ScanSettings scanSettings = new ScanSettings.Builder()
+                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                .build();
+        bluetoothLeScanner.startScan(null, scanSettings, leScanCallback);
     }
 
     public void stopScan() {
@@ -155,12 +172,9 @@ public class BluetoothManager {
                 if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                     return;
                 }
-                String deviceName = device.getName();
-                if (deviceName != null && !deviceName.isEmpty()) {
-                    discoveredDevices.add(device);
-                    if (listener != null) {
-                        listener.onDeviceDiscovered(device);
-                    }
+                discoveredDevices.add(device);
+                if (listener != null) {
+                    listener.onDeviceDiscovered(device);
                 }
             }
         }
