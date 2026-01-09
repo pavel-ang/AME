@@ -126,8 +126,20 @@ public class BluetoothManager {
             }
             return;
         }
+        if (bluetoothGatt != null) {
+            bluetoothGatt.disconnect();
+            bluetoothGatt.close();
+        }
         stopScan();
-        bluetoothGatt = device.connectGatt(context, false, gattCallback);
+        handler.postDelayed(() -> {
+            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                if (listener != null) {
+                    listener.onError("Bluetooth connect permission not granted");
+                }
+                return;
+            }
+            bluetoothGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
+        }, 500);
     }
 
     public void closeConnection() {
@@ -183,24 +195,35 @@ public class BluetoothManager {
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                if (listener != null) {
+                    listener.onError("Bluetooth connect permission not granted");
+                }
+                return;
+            }
+
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                if (listener != null) {
-                    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                        return;
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    if (listener != null) {
+                        listener.onDeviceConnected(gatt.getDevice().getName());
                     }
-                    listener.onDeviceConnected(gatt.getDevice().getName());
+                    gatt.discoverServices();
+                } else {
+                    if (listener != null) {
+                        listener.onError("Connection failed with status: " + status);
+                    }
+                    gatt.close();
                 }
-                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                    return;
-                }
-                gatt.discoverServices();
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                if (listener != null) {
-                    if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                        return;
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    if (listener != null) {
+                        listener.onError("Connection failed with status: " + status);
                     }
+                }
+                if (listener != null) {
                     listener.onDeviceDisconnected(gatt.getDevice().getName());
                 }
+                gatt.close();
             }
         }
 
